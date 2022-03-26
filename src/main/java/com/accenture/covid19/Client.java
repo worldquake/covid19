@@ -23,6 +23,7 @@ import org.apache.commons.math3.stat.correlation.PearsonsCorrelation;
 
 import com.jsoniter.JsonIterator;
 import com.jsoniter.any.Any;
+import com.jsoniter.spi.JsonException;
 
 public class Client {
 	public final static String ALL = "All";
@@ -97,11 +98,12 @@ public class Client {
 		if (spec == null || spec.isEmpty()) {
 			// All countries
 		} else if (spec.startsWith(COUNTRY_PFX)) {
-			arg += "country=" + spec.substring(1);
+			spec = spec.substring(1);
 			mainCountriesRoot = false;
-		} else if (spec.length() == 2) {
-			arg += "ab=" + spec; // I checked there is no country with 2 characters
-			mainCountriesRoot = false;
+			if (spec.length() == 2) {
+				arg += "ab=" + spec; // I checked there is no country with 2 characters
+			} else
+				arg += "country=" + spec;
 		} else {
 			arg += "continent=" + spec; // A continent can be given
 		}
@@ -125,26 +127,36 @@ public class Client {
 		List<String> individualCountriesList = new LinkedList<String>(); // To ensure order
 		for (Map.Entry<String, Any> mainCountry : mapDeaths.entrySet()) {
 			mainCountriesList.add(mainCountry.getKey());
-			population += mainCountry.getValue().get(ALL, "population").as(Double.class);
-			addCountriesSamples(mainCountry.getValue(), mainCountry.getKey(), "deaths", deaths, all, individualCountriesList, true);
+			try {
+				population += mainCountry.getValue().get(ALL, "population").as(Double.class);
+				addCountriesSamples(mainCountry.getValue(), mainCountry.getKey(), "deaths", deaths, all,
+						individualCountriesList, true);
+			} catch (JsonException je) {
+				CovidException ex = new CovidException("Country " + mainCountry.getKey() + " has invalid format", je);
+				if (failSafe)
+					ex.printStackTrace();
+				else
+					throw ex;
+			}
 		}
 		Map<String, Double> vaccinated = new LinkedHashMap<String, Double>();
 		for (String countryName : mainCountriesList) {
 			Any mainCountry = mapVaccines.get(countryName);
-			addCountriesSamples(mainCountry, countryName, "people_vaccinated", vaccinated, all, individualCountriesList, false);
+			addCountriesSamples(mainCountry, countryName, "people_vaccinated", vaccinated, all, individualCountriesList,
+					false);
 		}
 		try {
 			PearsonsCorrelation pc = new PearsonsCorrelation();
-			if(failSafe) {
+			if (failSafe) {
 				// Also for individual countries we get the common set
 				deaths.keySet().retainAll(vaccinated.keySet());
 				vaccinated.keySet().retainAll(deaths.keySet());
 			}
-			return pc.correlation(toPercentages(deaths.values(), population), toPercentages(vaccinated.values(), population));
+			return pc.correlation(toPercentages(deaths.values(), population),
+					toPercentages(vaccinated.values(), population));
 		} catch (MathIllegalArgumentException mia) {
-			throw new CovidException(
-					"Unable to process the results of " + arg + " using " + (all ? "all" : "individual countries") + " with " + this,
-					mia);
+			throw new CovidException("Unable to process the results of " + arg + " using "
+					+ (all ? "all" : "individual countries") + " with " + this, mia);
 		}
 	}
 
